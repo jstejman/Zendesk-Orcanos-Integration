@@ -94,48 +94,96 @@ class WorkItem {
         this.summary = ticket.subject;
         this.priority = ticket.priority;
         this.category; //must be able to handle it from the ticket
-        this.customerCountry = (ticket.custom_fields.find(field => field.id === ticketFields['Client data: Country'])?.value) ?? ''
-        this.status // "Unsolved"
+        this.customerCountry = (ticket.custom_fields.find(field => field.id === 1900000216213)?.value) ?? '' //needs to be hardcoded because of a duplicate field
+        this.status = "New"
         this.dateZendesk = ticket.created_at;
         this.dateOrcanos = new Date();
         this.dateDiscovered = ticket.created_at;
         this.ticketID = ticket.id;
-        this.ticketURL = ticket.url;
+        this.ticketURL = (ticket.url).split(".json")[0];
         this.customerName //get from customer ID
         this.customerEmail //get from customer ID
-        this.registrationDate = //get from customer ID
-        this.watch_s_n = (ticket.custom_fields.find(field => field.id === ticketFields['Watch S/N'])?.value) ?? '';
-        this.phoneAppVersion = (ticket.custom_fields.find(field => field.id === ticketFields['Phone App Version'])?.value) ?? '';
-        this.OSVersion = (ticket.custom_fields.find(field => field.id === ticketFields['OS Version'])?.value) ?? '';
-        this.watchSoftwareVersion = (ticket.custom_fields.find(field => field.id === ticketFields['Watch Software Version'])?.value) ?? '';
-        this.phoneManufacturer = (ticket.custom_fields.find(field => field.id === ticketFields['Phone Manufacturer'])?.value) ?? '';
-        this.phoneModel = (ticket.custom_fields.find(field => field.id === ticketFields['Phone Model'])?.value) ?? '';
+        this.registrationDate//get from customer ID
+        this.watch_s_n = (ticket.custom_fields.find(field => field.id === ticketFields['Client data: Watch S/N'])?.value) ?? '';
+        this.phoneAppVersion = (ticket.custom_fields.find(field => field.id === ticketFields['Client data: Phone app. version'])?.value) ?? '';
+        this.OSVersion = (ticket.custom_fields.find(field => field.id === ticketFields['Client data: OS Version'])?.value) ?? '';
+        this.watchSoftwareVersion = (ticket.custom_fields.find(field => field.id === ticketFields['Client data: Watch firmware version'])?.value) ?? '';
+        this.phoneManufacturer = (ticket.custom_fields.find(field => field.id === ticketFields['Client data: Phone Manufacturer'])?.value) ?? '';
+        this.phoneModel = (ticket.custom_fields.find(field => field.id === ticketFields['Client data: Phone Model'])?.value) ?? '';
         this.complaintCategory = (ticket.custom_fields.find(field => field.id === ticketFields['Complaint Category'])?.value) ?? '';
-        this.caseDescription = (ticket.custom_fields.find(field => field.id === ticketFields['Case Description'])?.value) ?? '';
+        this.caseDescription = ticket.description ?? '';
         this.isRMA; //get from ticket form
         this.rmaReason; //get from ticket 
     }
-    async postToOrcanos(){}
+    async postToOrcanos() {
+        // replaces all occurrences of \n with actual newline characters in this.caseDescription
+        let formattedDescription = this.caseDescription.replace(/\\n/g, '\n');
+        
+        let data = {
+            "Project_ID": 9347,
+            "Major_Version": 31,
+            "Minor_Version": 1,
+            "Object_Type": "Complaint",
+            "Object_Name": this.summary,
+            "Description": formattedDescription,
+            "Insert_to_Pool": "N",
+            "SkipIfNameExists": "N",
+            "CS318_value": this.customerCountry,
+            "Due_date": this.dateZendesk,
+            "Created_date": this.dateOrcanos,
+            "CS8_value": this.dateDiscovered,
+            "CS313_value": this.ticketID,
+            "CS314_value": this.ticketURL,
+            "CS299_value": this.customerName,
+            "Cust_email": this.customerEmail,
+            "CS56_value": this.registrationDate,
+            "CS309_value": this.watch_s_n,
+            "CS308_value": this.phoneAppVersion,
+            "CS319_value": this.OSVersion,
+            "CS311_value": this.watchSoftwareVersion,
+            "CS42_value": this.phoneManufacturer,
+            "CS75_value": this.phoneModel,
+            "CS191_value": this.complaintCategory,
+            "CS128_value": this.isRMA ? 1 : 0, // checkbox
+            "CS17_value": this.rmaReason
+        };
+    
+        try {
+            let response = await axios.post(`https://app.orcanos.com/${orcanosDomain}/api/v2/json/QW_Add_Object`, data, {
+                headers: {
+                    'Authorization': `Basic ${orcanosAuth}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            console.log(response.data);
+        } catch (error) {
+            console.error('Error posting to Orcanos:', error);
+        }
+    }
+    
     async updateZendesk(){}
+    async updateWorkItem(){}
 }
 
 async function createWorkItemsFromTickets() {
     
     tickets = await getZendeskTickets();
     workItems = [];
-    tickets.forEach(ticket => {
-        workItem = new WorkItem();
-        workItem.createFromTicket(ticket);
+    for (const ticket of tickets) {
+        const workItem = new WorkItem();
+        await workItem.createFromTicket(ticket);
         workItems.push(workItem);
-    });
+    }
     return workItems;
 }
 
 
 async function main() {
     workItems = await createWorkItemsFromTickets();
-    console.log(workItems);
-}
+    for(i in workItems){
+        console.log(workItems[i]);
+    }
+}   
 
 main()
 
