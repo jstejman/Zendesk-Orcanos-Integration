@@ -1,5 +1,6 @@
 const { getTicketFields, getUserInfo, getTicketFieldValues } = require('../services/zendeskService');
 const { postToOrcanos } = require('../services/orcanosService');
+const config = require('../config/config');
 
 class WorkItem {
   // Overview Items
@@ -73,12 +74,12 @@ class WorkItem {
       this.injurySeverity = this.complaintCategory === "complain_category_minor_injury" ? "Minor" : "Major";
     }
     this.caseDescription = ticket.description ?? '';
-    if (ticket.ticket_form_id === 5575369495825) {
+    if (ticket.ticket_form_id === config.zendesk.rmaFormID) {
       this.isRMA = true;
       let reason = getTicketFieldValues(ticket, ticketFields['RMA Reason']).split("rma_reason_")[1].replace(/_/g, ' ');
       reason = reason.charAt(0).toUpperCase() + reason.slice(1);
       this.rmaReason = reason;
-      this.isSafetyInvolved = getTicketFieldValues(ticket, 8137499924625) === "hram_yes" ? true : false;
+      this.isSafetyInvolved = getTicketFieldValues(ticket, ) === "hram_yes" ? true : false;
     }
   }
 
