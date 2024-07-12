@@ -1,6 +1,18 @@
 const axios = require('axios');
+const pino = require('pino');
+let pinopretty = require('pino-pretty');
 require('dotenv').config();
+const transport = pino.transport({
+    targets: [
+        {
+            target: 'pino-pretty',
+            level: 'info',
 
+        },
+    ],
+})
+
+const logger = pino(transport);
 function getOrcanosAuth() {
     return Buffer.from(`${process.env.ORCANOS_USER}:${process.env.ORCANOS_PASSWORD}`).toString('base64');
 }
@@ -8,6 +20,7 @@ function getOrcanosAuth() {
 
 async function getZendeskTickets() {
     try {
+        logger.info('Fetching tickets from Zendesk')
         const response = await axios.get(`https://${process.env.ZENDESK_DOMAIN}.zendesk.com/api/v2/views/${process.env.SYNC_ORCANOS_ID}/tickets.json`, {
             auth: {
                 username: `${process.env.ZENDESK_EMAIL}/token`,
@@ -16,13 +29,14 @@ async function getZendeskTickets() {
         });
         return response.data.tickets;
     } catch (error) {
-        console.error(`Failed to fetch tickets from Zendesk: ${error.response.status}`);
+        logger.error(`Failed to fetch tickets from Zendesk: ${error.response.status}`);
         return [];
     }
 }
 
 async function getTicket(ticket_id) {
     try {
+        logger.info('Fetching ticket from Zendesk')
         const response = await axios.get(`https://${process.env.ZENDESK_DOMAIN}.zendesk.com/api/v2/tickets/${ticket_id}`, {
             auth: {
                 username: `${process.env.ZENDESK_EMAIL}/token`,
@@ -31,7 +45,7 @@ async function getTicket(ticket_id) {
         });
         return response.data.ticket;
     } catch (error) {
-        console.error(`Failed to fetch ticket from Zendesk: ${error.response.status}`);
+        logger.error(`Failed to fetch ticket from Zendesk: ${error.response.status}`);
         return [];
     }
 }
@@ -50,7 +64,7 @@ async function getTicketFields() {
         });
         return ticketFields;
     } catch (error) {
-        console.error(`Failed to fetch ticket fields from Zendesk: ${error.response.status}`);
+        logger.error(`Failed to fetch ticket fields from Zendesk: ${error.response.status}`);
         return {};
     }
 }
@@ -77,7 +91,7 @@ async function getUserInfo(user_id) {
 
         return userInfo;
     } catch (error) {
-        console.error(`Failed to fetch user info from Zendesk: ${error.response.status}`);
+        logger.error(`Failed to fetch user info from Zendesk: ${error.response.status}`);
         return {};
     }
 }
@@ -138,20 +152,27 @@ async function postToOrcanos(workItem) {
     };
 
     try {
+        logger.info('Posting to Orcanos')
         let response = await axios.post(`https://app.orcanos.com/${process.env.ORCANOS_DOMAIN}/api/v2/json/QW_Add_Object`, data, {
             headers: {
                 Authorization: `Basic ${getOrcanosAuth()}`,
                 'Content-Type': 'application/json',
             },
         });
-        console.log(response.data);
+        workItem.workItemID = response.id;
     } catch (error) {
-        console.error('Error posting to Orcanos:', error);
+        logger.error('Error posting to Orcanos:', error);
     }
+    logger.info(`New work item #${workItem.workItemID} created in Orcanos for ticket ${workItem.ticketID}`);
 }
 
 async function createWorkItemsFromTickets() {
     const tickets = await getZendeskTickets();
+    if (tickets.length === 0) {
+        logger.info('No tickets fetched from Zendesk');
+        return [];
+    }
+    logger.info(`Fetched ${tickets.length} tickets from Zendesk`);
     const workItems = [];
     for (const ticket of tickets) {
         const workItem = new WorkItem();
@@ -165,6 +186,7 @@ async function createWorkItemsFromTickets() {
 class WorkItem {
     // Overview Items
     constructor() {
+        this.workItemID = '';
         this.summary = '';
         this.priority = '';
         this.category = '';
@@ -249,6 +271,7 @@ class WorkItem {
 }
 
 async function main() {
+    logger.info('Hello!');
     const workItems = await createWorkItemsFromTickets();
     for (const workItem of workItems) {
         console.log(workItem);
