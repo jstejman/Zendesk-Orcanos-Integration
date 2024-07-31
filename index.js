@@ -166,8 +166,8 @@ async function postToOrcanos(workItem) {
     logger.info(`New work item #${workItem.workItemID} created in Orcanos for ticket ${workItem.ticketID}`);
 }
 
-async function createWorkItemsFromTickets() {
-    const tickets = await getZendeskTickets();
+async function createWorkItemsFromTickets(tickets) {
+    //const tickets = await getZendeskTickets();
     if (tickets.length === 0) {
         logger.info('No tickets fetched from Zendesk');
         return [];
@@ -269,13 +269,35 @@ class WorkItem {
         await postToOrcanos(this);
     }
 }
+async function manageNewTickets(time_interval) {
+    tickets = await getZendeskTickets();
+    new_tickets = []; 
+    for(ticket in tickets) {
+        // ticket.date is between time intervals
+        new_tickets.append(ticket); 
+    }
+    workitems = await createWorkItemsFromTickets(new_tickets);
+    for(workitem in workitems){
+        postToOrcanos(workitem);
+    }
+// add logs
+}
+async function updateTicketsFromOrcanos(time_interval){
+    //get workitems from zendesk integration funnel
+    //check for updates
+    //see which one has been updated in the last time interval
+    //go to zendesk ticket and add an internal note with email notifications for those updates
+    //if zendesk comment field was updated, send it to zendesk
+// add logs    
+}
 
 async function main() {
-    logger.info('Hello!');
-    const workItems = await createWorkItemsFromTickets();
-    for (const workItem of workItems) {
-        console.log(workItem);
-    }
+// make sure logs appear in stdout
+    /*
+    time = 3600;
+    manageNewTickets(time);
+    updateTicketsFromOrcanos(time);
+    */    
 }
 
 main();
