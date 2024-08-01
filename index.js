@@ -95,7 +95,37 @@ async function getUserInfo(user_id) {
         return {};
     }
 }
+async function updateZendeskTicket(ticket_id, data) {
+    try {
+        logger.info('Updating ticket in Zendesk')
+        await axios.put(`https://${process.env.ZENDESK_DOMAIN}.zendesk.com/api/v2/tickets/${ticket_id}.json`, data, {
+            auth: {
+                username: `${process.env.ZENDESK_EMAIL}/token`,
+                password: process.env.ZENDESK_API_TOKEN,
+            },
+        });
+        logger.info(`Ticket #${ticket_id} updated in Zendesk`);
+    } catch (error) {
+        logger.error(`Failed to update ticket in Zendesk: ${error.response.status}`);
+    }
 
+}
+async function bulkUpdateTickets(ticket_ids, data) {
+    ids = ticket_ids.join(',');
+    try {
+        logger.info('Updating ticket in Zendesk')
+        await axios.put(`https://${process.env.ZENDESK_DOMAIN}.zendesk.com/api/v2/tickets/update_many.json?ids=${ids}`, data, {
+            auth: {
+                username: `${process.env.ZENDESK_EMAIL}/token`,
+                password: process.env.ZENDESK_API_TOKEN,
+            },
+        });
+        logger.info(`Tickets #${ids} updated in Zendesk`);
+    } catch (error) {
+        logger.error(`Failed to update tickets in Zendesk: ${error.response.status}`);
+    }
+
+}
 function getTicketFieldValues(ticket, field_id) {
     return ticket.custom_fields.find((field) => field.id === field_id)?.value ?? '';
 }
@@ -148,7 +178,11 @@ async function postToOrcanos(workItem) {
         CS35_Name: "Is RMA",
         CS35_value: workItem.isRMA ? 1 : 0, // checkbox
         CS36_Name: "RMA Reason",
-        CS36_value: workItem.rmaReason
+        CS36_value: workItem.rmaReason,
+        // Zendesk update fields
+        //CS19_Name: "Ticket solution - Update Zendesk",
+        //CS19_value: workItem.ticketSolvedUpdateZD,
+
     };
 
     try {
@@ -271,33 +305,97 @@ class WorkItem {
 }
 async function manageNewTickets(time_interval) {
     tickets = await getZendeskTickets();
-    new_tickets = []; 
-    for(ticket in tickets) {
-        // ticket.date is between time intervals
-        new_tickets.append(ticket); 
+    new_tickets = [];
+    ticket_ids = [];
+    logger.info(`Checking for new tickets in the last ${time_interval} minutes`);
+    for (ticket in tickets) {
+        // trigger for new or open tickets
+        if (ticket.created_at > Date.now() - time_interval * 60000 && (ticket.status === "new" || ticket.status === "open"))
+            new_tickets.append(ticket);
+        ticket_ids.append(ticket.id);
     }
+    logger.info(`Found ${new_tickets.length} new tickets`);
+
     workitems = await createWorkItemsFromTickets(new_tickets);
-    for(workitem in workitems){
-        postToOrcanos(workitem);
+    for (workitem in workitems) {
+        let ticketFields = await getTicketFields();
+        await postToOrcanos(workitem);
+        let data = {
+            ticket: {
+                status: "pending",
+                custom_fields: [
+                    { id: ticketFields['Orcanos ID'], value: workitem.workItemID }, // Orcanos ID custom field
+                ],
+            }
+        };
+        await updateZendeskTicket(workitem.ticketID, data);
     }
-// add logs
+
 }
-async function updateTicketsFromOrcanos(time_interval){
+async function updateTicketsFromOrcanos(time_interval) {
     //get workitems from zendesk integration funnel
+    ticketFields = await getTicketFields()
+    orcanos_ids = [];
+    logger.info(`Checking for updates in the last ${time_interval} minutes in Orcanos for pending tickets on Zendesk`);
+    tickets = await getZendeskTickets();
+    for (ticket in tickets) {
+        if (ticket.status === "pending") {
+            orcanos_ids.append(getTicketFieldValues(ticket, ticketFields['Orcanos ID']));
+        }
+    }
+    logger.info(`Found ${orcanos_ids.length} pending tickets in Zendesk`);
+
     //check for updates
-    //see which one has been updated in the last time interval
-    //go to zendesk ticket and add an internal note with email notifications for those updates
-    //if zendesk comment field was updated, send it to zendesk
-// add logs    
+    for (id in orcanos_ids) {
+        let response = await axios.get(`https://app.orcanos.com/${process.env.ORCANOS_DOMAIN}/api/v2/json/QW_Get_Object?id=${id}`, {
+            headers: {
+                Authorization: `Basic ${getOrcanosAuth()}`,
+                'Content-Type': 'application/json',
+            },
+        });
+        let workItem = response.data;
+        fields = response.data.Field;
+        for (field in fields) {
+            if (field === "Updated Date") {
+                datestr = fields[field].Text;
+                last_update = Date.parse(datestr);
+            }
+            if (field === "Zendesk Ticket ID") {
+                ticketidstr = fields[field].Text;
+            }
+            if (field === "Ticket solution - Update Zendesk") {
+                ticketsolution = fields[field].Text;
+            }
+        }
+        if (last_update > Date.now() - time_interval * 60000) {
+
+            let ticket = await getTicket(ticketidstr);
+            let data = {
+                ticket: {
+                    comment: {
+                        body: ticketsolution,
+                        public: false,
+                    },
+                    //see what other fields might need to be updated in zendesk
+                },
+            };
+            await updateZendeskTicket(ticketidstr, data);
+        }
+    }
+    // add logs    
 }
 
 async function main() {
-// make sure logs appear in stdout
+
+    // make sure logs appear in stdout
+
     /*
-    time = 3600;
-    manageNewTickets(time);
+    time = 60; // in minutes
+    logger.info(`Checking for new tickets and updates from Orcanos from the last ${time} minutes`);
     updateTicketsFromOrcanos(time);
-    */    
+    manageNewTickets(time);
+    */
+
 }
 
 main();
