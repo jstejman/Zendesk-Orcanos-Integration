@@ -175,7 +175,7 @@ async function postToOrcanos(workItem) {
         Category: workItem.category,
         CS25_Name: "Complaint Category",
         CS25_value: workItem.complaintCategory,
-        CS35_Name: "Is RMA",
+        CS35_Name: "RMA",
         CS35_value: workItem.isRMA ? 1 : 0, // checkbox
         CS36_Name: "RMA Reason",
         CS36_value: workItem.rmaReason,
@@ -193,7 +193,11 @@ async function postToOrcanos(workItem) {
                 'Content-Type': 'application/json',
             },
         });
-        workItem.workItemID = response.id;
+        if (response.data.error) {
+            logger.error('Error posting to Orcanos:', response.data.error);
+            return;
+        }
+        workItem.workItemID = response.data.Data;
     } catch (error) {
         logger.error('Error posting to Orcanos:', error);
     }
@@ -310,25 +314,26 @@ async function manageNewTickets(time_interval) {
     logger.info(`Checking for new tickets in the last ${time_interval} minutes`);
     for (ticket in tickets) {
         // trigger for new or open tickets
-        if (ticket.created_at > Date.now() - time_interval * 60000 && (ticket.status === "new" || ticket.status === "open"))
-            new_tickets.append(ticket);
-        ticket_ids.append(ticket.id);
+        if (Date.parse(tickets[ticket].created_at) > Date.now() - (time_interval * 60000) && (tickets[ticket].status === 'new' || tickets[ticket].status === 'open'))
+            new_tickets.push(tickets[ticket]);
+        // console.log(ticket.id);
+        ticket_ids.push(tickets[ticket].id);
     }
     logger.info(`Found ${new_tickets.length} new tickets`);
 
     workitems = await createWorkItemsFromTickets(new_tickets);
     for (workitem in workitems) {
         let ticketFields = await getTicketFields();
-        await postToOrcanos(workitem);
+        await postToOrcanos(workitems[workitem]);
         let data = {
             ticket: {
                 status: "pending",
                 custom_fields: [
-                    { id: ticketFields['Orcanos ID'], value: workitem.workItemID }, // Orcanos ID custom field
+                    { id: ticketFields['Orcanos ID'], value: workitems[workitem].workItemID }, // Orcanos ID custom field
                 ],
             }
         };
-        await updateZendeskTicket(workitem.ticketID, data);
+        await updateZendeskTicket(workitems[workitem].ticketID, data);
     }
 
 }
@@ -339,63 +344,81 @@ async function updateTicketsFromOrcanos(time_interval) {
     logger.info(`Checking for updates in the last ${time_interval} minutes in Orcanos for pending tickets on Zendesk`);
     tickets = await getZendeskTickets();
     for (ticket in tickets) {
-        if (ticket.status === "pending") {
-            orcanos_ids.append(getTicketFieldValues(ticket, ticketFields['Orcanos ID']));
+        if (tickets[ticket].status === "pending") {
+            orcanos_ids.push(getTicketFieldValues(tickets[ticket], ticketFields['Orcanos ID']));
         }
     }
     logger.info(`Found ${orcanos_ids.length} pending tickets in Zendesk`);
 
     //check for updates
     for (id in orcanos_ids) {
-        let response = await axios.get(`https://app.orcanos.com/${process.env.ORCANOS_DOMAIN}/api/v2/json/QW_Get_Object?id=${id}`, {
+        let response = await axios.get(`https://app.orcanos.com/${process.env.ORCANOS_DOMAIN}/api/v2/json/QW_Get_Object?id=${orcanos_ids[id]}`, {
             headers: {
                 Authorization: `Basic ${getOrcanosAuth()}`,
                 'Content-Type': 'application/json',
             },
         });
         let workItem = response.data;
-        fields = response.data.Field;
+        fields = response.data.Data.Field;
         for (field in fields) {
-            if (field === "Updated Date") {
-                datestr = fields[field].Text;
+            if (fields[field].Name === "Updated Date") {
+                // datestr = new Date(Date.UTC(
+                //     ...(
+                //         (str => [
+                //             ...str.split(' ')[0].split('/').map(Number),
+                //             ...str.split(' ')[1].split(':').map(Number)
+                //         ])(fields[field].Text)
+                //     )
+                // ));
+                let datestr = new Date(Date.UTC(
+                    ...((str => {
+                        let [datePart, timePart] = str.split(' ');
+                        let [month, day, year] = datePart.split('/').map(Number);
+                        let [time, ampm] = timePart.split(' ');
+                        let [hours, minutes, seconds] = time.split(':').map(Number);
+                        if (ampm === 'PM' && hours < 12) hours += 12;
+                        if (ampm === 'AM' && hours === 12) hours = 0;
+                        return [year, month - 1, day, hours, minutes, seconds];
+                    })(fields[field].Text))
+                ));
                 last_update = Date.parse(datestr);
             }
-            if (field === "Zendesk Ticket ID") {
+            if (fields[field].Name === "Zendesk Ticket ID") {
                 ticketidstr = fields[field].Text;
             }
-            if (field === "Ticket solution - Update Zendesk") {
+            if (fields[field].Name === "Ticket solution - Update Zendesk") {
                 ticketsolution = fields[field].Text;
             }
         }
         if (last_update > Date.now() - time_interval * 60000) {
 
-            let ticket = await getTicket(ticketidstr);
-            let data = {
-                ticket: {
-                    comment: {
-                        body: ticketsolution,
-                        public: false,
+            // let ticket = await getTicket(ticketidstr);
+            if(ticketsolution === null){
+                logger.info(`No updates found for ticket ${ticketidstr}`);
+            }
+            else {
+                let data = {
+                    ticket: {
+                        comment: {
+                            body: ticketsolution,
+                            public: false,
+                        },
+                        //see what other fields might need to be updated in zendesk
                     },
-                    //see what other fields might need to be updated in zendesk
-                },
-            };
-            await updateZendeskTicket(ticketidstr, data);
+                };
+                await updateZendeskTicket(ticketidstr, data);
+            }
+
         }
     }
     // add logs    
 }
 
-async function main() {
-
-    // make sure logs appear in stdout
-
-    /*
+async function main() {    
     time = 60; // in minutes
     logger.info(`Checking for new tickets and updates from Orcanos from the last ${time} minutes`);
     updateTicketsFromOrcanos(time);
     manageNewTickets(time);
-    */
-
 }
 
 main();
